@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
 from database import engine, init_db
-from main import UNPARSED_REPLY, app
+from main import HEALTH_BODY, UNPARSED_REPLY, app
 from models import CONFIRMATION_BODY, Transaction
 
 atexit.register(engine.dispose)
@@ -57,9 +57,12 @@ class WebhookTests(unittest.TestCase):
 
     def test_health(self):
         with TestClient(app) as client:
-            response = client.get("/health")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"status": "ok"})
+            health = client.get("/health")
+            root = client.get("/")
+        self.assertEqual(health.status_code, 200)
+        self.assertEqual(root.status_code, 200)
+        self.assertEqual(health.json(), HEALTH_BODY)
+        self.assertEqual(root.json(), HEALTH_BODY)
 
     @patch("main.send_text", new_callable=AsyncMock)
     def test_registra_e_confirma(self, send_text: AsyncMock):
@@ -70,7 +73,6 @@ class WebhookTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertTrue(body["results"][0]["parsed"])
-        self.assertTrue(body["results"][0]["delivered"])
 
         with Session(engine) as session:
             saved = session.exec(select(Transaction)).one()
@@ -137,7 +139,8 @@ class WebhookTests(unittest.TestCase):
                 content=b"nao-json",
                 headers={"content-type": "application/json"},
             )
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"ok": True, "ignored": True})
 
 
 if __name__ == "__main__":

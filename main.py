@@ -6,13 +6,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, Request
+from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.responses import JSONResponse
-from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from database import engine, init_db
+from database import DATABASE_URL, engine, ensure_data_dir, init_db
 from models import CONFIRMATION_BODY, CONFIRMATION_TEMPLATE_KEY, MessageTemplate, Transaction
 from services.evolution import send_text
 from services.parser import IncomingMessage, extract_messages, parse_expense
@@ -24,50 +23,67 @@ logging.basicConfig(
 logger = logging.getLogger("vorcaro")
 
 UNPARSED_REPLY = "Não consegui ler o valor. Exemplo: Almoço 85"
+HEALTH_BODY = {"status": "online", "system": "Vorcaro Finance Bot"}
+
+
+def _bind() -> tuple[str, str]:
+    host = os.getenv("HOST", "0.0.0.0").strip() or "0.0.0.0"
+    port = os.getenv("PORT", "80").strip() or "80"
+    return host, port
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    host, port = _bind()
+    logger.info("Iniciando Vorcaro Finance Bot em %s:%s", host, port)
+    ensure_data_dir()
+    logger.info("Diretório de dados pronto para %s", DATABASE_URL)
     init_db()
+    logger.info("Vorcaro Finance Bot no ar em http://%s:%s", host, port)
     yield
+    logger.info("Vorcaro Finance Bot encerrado")
 
 
 app = FastAPI(title="Vorcaro Bot", version="1.0.0", lifespan=lifespan)
 
 
 @app.get("/health")
+@app.get("/")
 def health():
-    with engine.connect() as connection:
-        connection.execute(text("SELECT 1"))
-    return {"status": "ok"}
+    return HEALTH_BODY
 
 
 @app.post("/webhook/evolution")
-async def evolution_webhook(request: Request):
+async def evolution_webhook(request: Request, background: BackgroundTasks):
     try:
         payload = await request.json()
     except Exception:
-        return JSONResponse({"ok": False, "error": "json inválido"}, status_code=400)
+        logger.warning("Webhook Evolution recebeu corpo que não é JSON")
+        return JSONResponse({"ok": True, "ignored": True}, status_code=200)
 
     if not isinstance(payload, dict):
         return {"ok": True, "ignored": True}
 
     results = []
-    for incoming in extract_messages(payload):
-        if incoming.from_me or _is_broadcast(incoming.remote_jid):
-            continue
-        results.append(await _register(incoming))
+    try:
+        for incoming in extract_messages(payload):
+            if incoming.from_me or _is_broadcast(incoming.remote_jid):
+                continue
+            results.append(_register(incoming, background))
+    except Exception:
+        logger.exception("Falha ao processar webhook da Evolution")
+        return {"ok": True}
 
     if not results:
         return {"ok": True, "ignored": True}
     return {"ok": True, "results": results}
 
 
-async def _register(incoming: IncomingMessage) -> dict:
+def _register(incoming: IncomingMessage, background: BackgroundTasks) -> dict:
     parsed = parse_expense(incoming.text)
     if parsed is None:
-        delivered = await send_text(incoming.remote_jid, UNPARSED_REPLY)
-        return {"parsed": False, "delivered": delivered}
+        background.add_task(send_text, incoming.remote_jid, UNPARSED_REPLY)
+        return {"parsed": False}
 
     with Session(engine) as session:
         if incoming.external_id:
@@ -98,7 +114,7 @@ async def _register(incoming: IncomingMessage) -> dict:
         transaction_id = transaction.id
         reply = _confirmation(session, parsed.amount, parsed.description, parsed.status)
 
-    delivered = await send_text(incoming.remote_jid, reply)
+    background.add_task(send_text, incoming.remote_jid, reply)
     logger.info(
         "Despesa %s registrada: %.2f %s %s",
         transaction_id,
@@ -106,11 +122,7 @@ async def _register(incoming: IncomingMessage) -> dict:
         parsed.status,
         parsed.category,
     )
-    return {
-        "parsed": True,
-        "transaction_id": transaction_id,
-        "delivered": delivered,
-    }
+    return {"parsed": True, "transaction_id": transaction_id}
 
 
 def _confirmation(session: Session, amount: float, description: str, status: str) -> str:

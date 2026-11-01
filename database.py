@@ -44,9 +44,36 @@ _connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite"
 engine = create_engine(DATABASE_URL, connect_args=_connect_args)
 
 
+def ensure_data_dir() -> None:
+    """Cria o diretório do SQLite antes de abrir o banco.
+
+    No container o caminho é /app/data. Um volume montado pelo Easypanel
+    pode chegar vazio, então a pasta precisa existir de novo na subida.
+    """
+    directories: list[Path] = []
+    db_path = sqlite_path(DATABASE_URL)
+    if db_path is not None:
+        directories.append(db_path.parent)
+    if os.name != "nt":
+        directories.append(Path("/app/data"))
+
+    seen: set[str] = set()
+    for directory in directories:
+        key = str(directory)
+        if not key or key in {".", ""} or key in seen:
+            continue
+        seen.add(key)
+        directory.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(directory, 0o777)
+        except OSError:
+            pass
+
+
 def init_db() -> None:
     from models import CONFIRMATION_BODY, CONFIRMATION_TEMPLATE_KEY, MessageTemplate
 
+    ensure_data_dir()
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
         existing = session.exec(
