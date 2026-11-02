@@ -2,7 +2,7 @@ import atexit
 import os
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
@@ -21,7 +21,7 @@ from sqlmodel import Session, select
 
 from database import engine, init_db
 from main import HEALTH_BODY, UNPARSED_REPLY, app
-from models import CONFIRMATION_BODY, CorporateExpense, InboundReceipt, Transaction
+from models import CONFIRMATION_BODY, CorporateExpense, Expense, InboundReceipt, Transaction
 from services.financeiro import format_registered_expense, is_financial_query, process_expense_message
 from services.parser import IncomingMessage
 
@@ -201,14 +201,14 @@ class WebhookTests(unittest.TestCase):
         self.assertIn("results", response.json())
         with Session(engine) as session:
             saved = session.exec(select(Transaction)).one()
-            corporate = session.exec(select(CorporateExpense)).all()
+            corporate = session.exec(select(Expense)).all()
         self.assertEqual(saved.description, "Almoço")
         self.assertEqual(corporate, [])
 
 
 def _clear_tables() -> None:
     with Session(engine) as session:
-        for model in (Transaction, CorporateExpense, InboundReceipt):
+        for model in (Transaction, CorporateExpense, Expense, InboundReceipt):
             for row in session.exec(select(model)).all():
                 session.delete(row)
         session.commit()
@@ -228,33 +228,28 @@ class CorporateFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(is_financial_query("Paguei 120 reais de frete da distribuidora hoje"))
 
     def test_mensagem_registrada_no_formato_do_gerente(self):
-        expense = CorporateExpense(
-            amount=1140.5,
-            occurred_at=datetime(2026, 11, 2, 9, 15),
-            category="Suprimentos",
-            supplier="Distribuidora Norte",
-            unit="Posto VIP",
-            document_type="Nota",
+        expense = Expense(
+            valor=1140.5,
+            data_hora=datetime(2026, 11, 2, 9, 15, tzinfo=ZoneInfo("America/Sao_Paulo")),
+            categoria_principal="Operação Empresas (Grupo Lisboa)",
+            subcategoria="Mercadoria Revenda (Loja / Food)",
+            origem_recurso="Itaú",
+            centro_custo_ou_unidade="Posto VIP",
+            favorecido="Distribuidora Norte",
+            tipo_documento="Cupom",
+            status_confirmacao="CONFIRMADO",
             group_jid="120363411915877448@g.us",
         )
         text = format_registered_expense(expense)
-        self.assertEqual(
-            text,
-            "\n".join(
-                (
-                    "🧾 *DESPESA REGISTRADA*",
-                    "━━━━━━━━━━━━━━━━━━",
-                    "💰 *Valor:* R$ 1.140,50",
-                    "📅 *Data/Hora:* 02/11/2026 09:15",
-                    "🏷️ *Categoria:* Suprimentos",
-                    "👤 *Favorecido / Fornecedor:* Distribuidora Norte",
-                    "🏢 *Unidade Identificada:* Posto VIP",
-                    "📄 *Tipo de Documento:* Nota",
-                    "━━━━━━━━━━━━━━━━━━",
-                    "✅ _Lançamento conferido com sucesso._",
-                )
-            ),
-        )
+        self.assertIn("🧾 *DESPESA REGISTRADA*", text)
+        self.assertIn("R$ 1.140,50", text)
+        self.assertIn("02/11/2026 09:15", text)
+        self.assertIn("Operação Empresas (Grupo Lisboa) » Mercadoria Revenda (Loja / Food)", text)
+        self.assertIn("Itaú", text)
+        self.assertIn("Posto VIP", text)
+        self.assertIn("Distribuidora Norte", text)
+        self.assertIn("Cupom", text)
+        self.assertIn("Lançamento conferido e salvo na base de dados.", text)
 
     async def test_interpretacao_grava_despesa_corporativa(self):
         incoming = IncomingMessage(
@@ -266,13 +261,16 @@ class CorporateFlowTests(unittest.IsolatedAsyncioTestCase):
         )
         with patch("services.financeiro.extract_expense", new_callable=AsyncMock) as extract_expense:
             extract_expense.return_value = {
-                "amount": 120,
-                "occurred_at": "2026-11-02T09:15:00",
-                "category": "Suprimentos",
-                "supplier": "Distribuidora Norte",
-                "unit": "Posto VIP",
-                "document_type": "Áudio",
-                "description": "Frete",
+                "valor": 120,
+                "data_hora": "2026-11-02T09:15:00-03:00",
+                "categoria_principal": "Operação Empresas (Grupo Lisboa)",
+                "subcategoria": "Mercadoria Revenda (Loja / Food)",
+                "origem_recurso": "Bradesco",
+                "centro_custo_ou_unidade": "Posto VIP",
+                "favorecido": "Distribuidora Norte",
+                "tipo_documento": "PIX",
+                "status_confirmacao": "CONFIRMADO",
+                "transcricao": "Paguei 120 reais de frete pelo Bradesco",
             }
             with patch("services.financeiro.send_text", new_callable=AsyncMock) as send:
                 send.return_value = True
@@ -282,36 +280,41 @@ class CorporateFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(send.await_count, 1)
         body = send.await_args.args[1]
         self.assertIn("R$ 120,00", body)
-        self.assertIn("Áudio", body)
+        self.assertIn("Bradesco", body)
+        self.assertIn("Operação Empresas (Grupo Lisboa) » Mercadoria Revenda (Loja / Food)", body)
         with Session(engine) as session:
-            row = session.exec(select(CorporateExpense)).one()
-        self.assertEqual(row.amount, 120)
-        self.assertEqual(row.supplier, "Distribuidora Norte")
+            row = session.exec(select(Expense)).one()
+        self.assertEqual(row.valor, 120)
+        self.assertEqual(row.favorecido, "Distribuidora Norte")
+        self.assertEqual(row.origem_recurso, "Bradesco")
+        self.assertEqual(row.status_confirmacao, "CONFIRMADO")
         self.assertEqual(row.group_jid, incoming.remote_jid)
 
     async def test_consulta_usa_o_banco_e_nao_o_gemini(self):
         moment = datetime.now(ZoneInfo("America/Sao_Paulo"))
         with Session(engine) as session:
             session.add(
-                CorporateExpense(
-                    amount=50,
-                    occurred_at=moment,
-                    category="Combustível",
-                    supplier="Posto Shell",
-                    unit="Real",
-                    document_type="PIX",
-                    description="diesel",
+                Expense(
+                    valor=50,
+                    data_hora=moment,
+                    categoria_principal="Filho (Gabriel)",
+                    subcategoria="Educação (Marista / Material / Cursos)",
+                    origem_recurso="Itaú",
+                    centro_custo_ou_unidade="Gabriel",
+                    favorecido="Colégio Marista",
+                    tipo_documento="PIX",
+                    status_confirmacao="CONFIRMADO",
                     group_jid="120363411915877448@g.us",
                     external_id="SEED1",
                 )
             )
             session.commit()
         incoming = IncomingMessage(
-            text="quanto gastamos hoje?",
+            text="gastos com gabriel este mês",
             remote_jid="120363411915877448@g.us",
             external_id="Q1",
             from_me=False,
-            raw={"message": {"conversation": "quanto gastamos hoje?"}},
+            raw={"message": {"conversation": "gastos com gabriel este mês"}},
         )
         with patch("services.financeiro.extract_expense", new_callable=AsyncMock) as extract_expense:
             with patch("services.financeiro.send_text", new_callable=AsyncMock) as send:
@@ -319,9 +322,121 @@ class CorporateFlowTests(unittest.IsolatedAsyncioTestCase):
                 await process_expense_message(incoming)
         extract_expense.assert_not_awaited()
         body = send.await_args.args[1]
-        self.assertIn("RESUMO DE DESPESAS", body)
+        self.assertIn("CONSULTA DE DESPESAS", body)
         self.assertIn("50,00", body)
-        self.assertIn("Combustível", body)
+        self.assertIn("Filho (Gabriel)", body)
+        self.assertIn("Educação (Marista / Material / Cursos)", body)
+
+    async def test_sem_origem_grava_duvida_e_resposta_confirma(self):
+        incoming = IncomingMessage(
+            text="PIX de 80 reais para uma pessoa",
+            remote_jid="120363411915877448@g.us",
+            external_id="DUV1",
+            from_me=False,
+            raw={"key": {"id": "DUV1"}, "message": {"conversation": "PIX de 80 reais"}},
+        )
+        with patch("services.financeiro.extract_expense", new_callable=AsyncMock) as extract_expense:
+            extract_expense.return_value = {
+                "valor": 80,
+                "categoria_principal": "Despesas Pessoais & Outros",
+                "subcategoria": "Outros",
+                "favorecido": "João",
+                "tipo_documento": "PIX",
+                "status_confirmacao": "PENDENTE_INFO",
+                "duvida_pendente": "Transferência para pessoa física sem contexto.",
+            }
+            with patch("services.financeiro.send_text", new_callable=AsyncMock) as send:
+                send.return_value = True
+                await process_expense_message(incoming)
+        body = send.await_args.args[1]
+        self.assertIn("DESPESA REGISTRADA COM DÚVIDA", body)
+        self.assertIn("R$ 80,00", body)
+        self.assertIn("João", body)
+        self.assertIn("Não identificada", body)
+        with Session(engine) as session:
+            row = session.exec(select(Expense)).one()
+        self.assertEqual(row.status_confirmacao, "PENDENTE_INFO")
+        self.assertIn("conta", row.duvida_pendente.lower())
+
+        reply = IncomingMessage(
+            text="escola do Gabriel pelo Bradesco",
+            remote_jid="120363411915877448@g.us",
+            external_id="DUV2",
+            from_me=False,
+            raw={"message": {"conversation": "escola do Gabriel pelo Bradesco"}},
+        )
+        with patch("services.financeiro.extract_expense", new_callable=AsyncMock) as extract_expense:
+            with patch("services.financeiro.send_text", new_callable=AsyncMock) as send:
+                send.return_value = True
+                await process_expense_message(reply)
+        extract_expense.assert_not_awaited()
+        confirmed = send.await_args.args[1]
+        self.assertIn("DESPESA REGISTRADA", confirmed)
+        self.assertIn("Filho (Gabriel) » Educação (Marista / Material / Cursos)", confirmed)
+        self.assertIn("Bradesco", confirmed)
+        with Session(engine) as session:
+            row = session.exec(select(Expense)).one()
+        self.assertEqual(row.status_confirmacao, "CONFIRMADO")
+        self.assertIsNone(row.duvida_pendente)
+        self.assertEqual(row.origem_recurso, "Bradesco")
+        self.assertEqual(row.centro_custo_ou_unidade, "Gabriel")
+
+    async def test_consulta_flats_e_consorcios_no_periodo_todo(self):
+        old = datetime(2024, 1, 15, 15, 0, tzinfo=timezone.utc)
+        with Session(engine) as session:
+            session.add(
+                Expense(
+                    valor=300,
+                    data_hora=old,
+                    categoria_principal="Investimentos & Patrimônio",
+                    subcategoria="Flats (Condomínio / IPTU / Pool / Reforma)",
+                    origem_recurso="Itaú",
+                    centro_custo_ou_unidade="Flat",
+                    favorecido="Condomínio",
+                    tipo_documento="Boleto",
+                    group_jid="120363411915877448@g.us",
+                    external_id="FLAT1",
+                )
+            )
+            session.add(
+                Expense(
+                    valor=450.5,
+                    data_hora=old,
+                    categoria_principal="Investimentos & Patrimônio",
+                    subcategoria="Consórcios (Parcelas / Lances)",
+                    origem_recurso="Santander",
+                    favorecido="Consórcio",
+                    tipo_documento="Boleto",
+                    group_jid="120363411915877448@g.us",
+                    external_id="CONS1",
+                )
+            )
+            session.commit()
+
+        async def ask(text: str) -> str:
+            incoming = IncomingMessage(
+                text=text,
+                remote_jid="120363411915877448@g.us",
+                external_id=text,
+                from_me=False,
+                raw={"message": {"conversation": text}},
+            )
+            with patch("services.financeiro.extract_expense", new_callable=AsyncMock) as extract_expense:
+                with patch("services.financeiro.send_text", new_callable=AsyncMock) as send:
+                    send.return_value = True
+                    await process_expense_message(incoming)
+            extract_expense.assert_not_awaited()
+            return send.await_args.args[1]
+
+        flats = await ask("total de flats")
+        self.assertIn("300,00", flats)
+        self.assertIn("Flats (Condomínio / IPTU / Pool / Reforma)", flats)
+        self.assertNotIn("450,50", flats)
+
+        consorcios = await ask("quanto paguei de consórcios?")
+        self.assertIn("450,50", consorcios)
+        self.assertIn("Consórcios (Parcelas / Lances)", consorcios)
+        self.assertNotIn("300,00", consorcios)
 
 
 if __name__ == "__main__":

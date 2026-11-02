@@ -3,7 +3,8 @@ import os
 import unittest
 from unittest.mock import patch
 
-from services.gemini_client import parse_model_json
+from services.gemini_client import SYSTEM_PROMPT, parse_model_json
+from services.taxonomia import hint_from_text
 from services.media import decode_base64, find_media, normalize_mime
 from services.settings import is_expense_group
 
@@ -83,6 +84,19 @@ class GeminiJsonTests(unittest.TestCase):
         )
         self.assertEqual(payload["amount"], 120.5)
         self.assertEqual(payload["category"], "Suprimentos")
+
+
+class TaxonomyTests(unittest.TestCase):
+    def test_gabriela_nao_cai_em_gabriel(self):
+        principal, sub, _center = hint_from_text("pensão para Gabriela mãe do Gabriel")
+        self.assertEqual(principal, "Ex-Cônjuges")
+        self.assertEqual(sub, "Gabriela (Mãe Gabriel)")
+
+    def test_prompt_trava_a_taxonomia_e_a_origem(self):
+        self.assertIn("Filho (Gabriel)", SYSTEM_PROMPT)
+        self.assertIn("Conta Debitada", SYSTEM_PROMPT)
+        self.assertIn("PENDENTE_INFO", SYSTEM_PROMPT)
+        self.assertIn("origem_recurso", SYSTEM_PROMPT)
 
 
 class GroupRoutingTests(unittest.TestCase):

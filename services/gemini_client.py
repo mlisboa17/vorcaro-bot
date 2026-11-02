@@ -12,29 +12,33 @@ from datetime import datetime
 
 from services.media import InboundContent
 from services.settings import gemini_api_key, gemini_model
+from services.taxonomia import taxonomy_prompt
 
 logger = logging.getLogger("vorcaro.gemini")
 
-SYSTEM_PROMPT = """Você é o Gerente Financeiro Vorcaro.
-Extraia uma despesa corporativa do texto, PDF, imagem ou áudio recebido.
-Responda somente com um objeto JSON, sem markdown, nestas chaves:
-{
-  "amount": 0.0,
-  "occurred_at": "YYYY-MM-DDTHH:MM:SS",
-  "category": "Combustível | Manutenção | Pessoal | Suprimentos | Tributos | Outros",
-  "supplier": "razão social ou nome, ou Não identificado",
-  "unit": "Posto VIP | Real | Casa Caiada | Matriz | Não especificado",
-  "document_type": "PIX | Boleto | Recibo Fiscal | Áudio | Nota",
-  "description": "resumo curto"
-}
-Regras:
-- amount é o valor em reais. Use ponto como separador decimal.
-- occurred_at é a data e hora identificadas no documento ou na fala, no fuso America/Sao_Paulo.
-- Se a data não aparecer, use a data de referência informada.
-- category, unit e document_type precisam ser exatamente um dos valores listados.
-- supplier é o favorecido ou fornecedor. Sem nome, use "Não identificado".
-- Em áudio, transcreva a fala e interprete a despesa declarada.
-- Se não houver despesa, responda {"error": "sem_despesa"}.
+SYSTEM_PROMPT = f"""Você é o Gerente Financeiro Vorcaro.
+Extraia uma despesa de texto, PDF, imagem ou áudio.
+Responda somente com um objeto JSON, sem markdown:
+{{
+  "valor": 0.0,
+  "data_hora": "YYYY-MM-DDTHH:MM:SS-03:00",
+  "categoria_principal": "categoria exata da taxonomia",
+  "subcategoria": "subcategoria exata da taxonomia",
+  "origem_recurso": "banco, cartão, dinheiro ou caixa, ou null",
+  "centro_custo_ou_unidade": "Gabriel, Posto VIP, Posto Real, Casa Caiada, Restaurante, Conveniência, Flat, Pessoal ou null",
+  "favorecido": "nome ou razão social, ou null",
+  "tipo_documento": "PIX, Boleto, TED, Cartão, Cupom ou Dinheiro",
+  "status_confirmacao": "CONFIRMADO ou PENDENTE_INFO",
+  "duvida_pendente": "pergunta curta ou null",
+  "transcricao": "texto lido ou fala transcrita"
+}}
+{taxonomy_prompt()}
+- valor é o número em reais, com ponto decimal.
+- data_hora é o momento identificado, no fuso America/Sao_Paulo. Sem data, use a data de referência.
+- Copie categoria_principal e subcategoria exatamente como estão na taxonomia.
+- origem_recurso é obrigatória quando o comprovante ou a fala mostrar a conta debitada.
+- Em áudio, transcreva e interprete a despesa.
+- Sem despesa identificável, responda {{"error": "sem_despesa"}}.
 """
 
 

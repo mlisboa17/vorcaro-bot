@@ -33,28 +33,26 @@ class Transaction(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-CORPORATE_CATEGORIES = (
-    "Combustível",
-    "Manutenção",
-    "Pessoal",
-    "Suprimentos",
-    "Tributos",
-    "Outros",
-)
-CORPORATE_UNITS = (
-    "Posto VIP",
-    "Real",
-    "Casa Caiada",
-    "Matriz",
-    "Não especificado",
-)
-CORPORATE_DOCUMENT_TYPES = (
-    "PIX",
-    "Boleto",
-    "Recibo Fiscal",
-    "Áudio",
-    "Nota",
-)
+class Expense(SQLModel, table=True):
+    """Plano de contas do Gerente Financeiro. Separado dos lançamentos por texto."""
+
+    __tablename__ = "expenses"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    valor: float
+    data_hora: datetime = Field(index=True)
+    categoria_principal: str = Field(index=True)
+    subcategoria: str = Field(index=True)
+    origem_recurso: Optional[str] = None
+    centro_custo_ou_unidade: Optional[str] = None
+    favorecido: Optional[str] = None
+    tipo_documento: str
+    status_confirmacao: str = Field(default="CONFIRMADO")
+    duvida_pendente: Optional[str] = Field(default=None)
+    raw_text_ou_transcricao: Optional[str] = Field(default=None)
+    group_jid: str = Field(index=True)
+    external_id: Optional[str] = Field(default=None, unique=True, index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class CorporateExpense(SQLModel, table=True):
