@@ -1,8 +1,9 @@
 import logging
-import os
 from urllib.parse import quote
 
 import httpx
+
+from services.settings import evolution_config
 
 logger = logging.getLogger("vorcaro.evolution")
 
@@ -16,27 +17,31 @@ def destination_for(remote_jid: str) -> str:
     return "".join(char for char in local if char.isdigit())
 
 
-async def send_text(remote_jid: str, text: str) -> bool:
-    """Envia uma resposta curta pela Evolution API v2. Não propaga falha de rede."""
-    base = os.getenv("EVOLUTION_API_URL", "").strip().rstrip("/")
-    api_key = os.getenv("EVOLUTION_API_KEY", "").strip()
-    instance = os.getenv("EVOLUTION_INSTANCE", "").strip()
+async def send_text(remote_jid: str, text: str, *, delay: int = 1000) -> bool:
+    """Envia texto pela Evolution API v2. Falhas ficam no log e não sobem ao webhook."""
+    config = evolution_config()
     number = destination_for(remote_jid)
-
-    if not base or not api_key or not instance or not number:
-        logger.warning("Evolution API incompleta; confirmação não enviada.")
+    if not config.ready or not number:
+        logger.warning("Evolution API incompleta; mensagem não enviada.")
         return False
 
-    url = f"{base}/message/sendText/{quote(instance, safe='')}"
+    url = f"{config.base_url}/message/sendText/{quote(config.instance, safe='')}"
+    payload = {"number": number, "text": text, "delay": delay}
+    headers = {"apikey": config.api_key, "Content-Type": "application/json"}
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            response = await client.post(
-                url,
-                json={"number": number, "text": text},
-                headers={"apikey": api_key},
-            )
-            response.raise_for_status()
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(url, json=payload, headers=headers)
     except httpx.HTTPError:
-        logger.exception("Falha ao enviar mensagem pela Evolution API")
+        logger.exception("Falha de rede ao enviar mensagem pela Evolution API para %s", number)
+        return False
+
+    if response.status_code not in {200, 201}:
+        logger.error(
+            "Evolution API recusou o envio (%s) para %s em %s. Corpo: %s",
+            response.status_code,
+            number,
+            url,
+            response.text[:2000],
+        )
         return False
     return True

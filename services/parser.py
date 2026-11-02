@@ -5,6 +5,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from models import CATEGORIES
+from services.media import message_has_media
 
 _TZ = ZoneInfo("America/Sao_Paulo")
 
@@ -53,6 +54,7 @@ class IncomingMessage:
     remote_jid: str
     external_id: str | None
     from_me: bool
+    raw: dict | None = None
 
 
 def current_date() -> date:
@@ -82,8 +84,10 @@ def extract_messages(payload: dict) -> list[IncomingMessage]:
     for node in _message_nodes(payload):
         key = node.get("key") if isinstance(node.get("key"), dict) else {}
         remote_jid = key.get("remoteJid") or key.get("remoteJidAlt")
-        text = _message_text(node.get("message"))
-        if not isinstance(remote_jid, str) or not remote_jid.strip() or text is None:
+        text = _message_text(node.get("message")) or ""
+        if not isinstance(remote_jid, str) or not remote_jid.strip():
+            continue
+        if not text and not message_has_media(node):
             continue
         external_id = key.get("id")
         found.append(
@@ -92,6 +96,7 @@ def extract_messages(payload: dict) -> list[IncomingMessage]:
                 remote_jid=remote_jid.strip(),
                 external_id=external_id if isinstance(external_id, str) and external_id else None,
                 from_me=_as_bool(key.get("fromMe")),
+                raw=node,
             )
         )
     return found

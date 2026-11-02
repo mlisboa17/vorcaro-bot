@@ -14,7 +14,9 @@ from sqlmodel import Session, select
 from database import DATABASE_URL, engine, ensure_data_dir, init_db
 from models import CONFIRMATION_BODY, CONFIRMATION_TEMPLATE_KEY, MessageTemplate, Transaction
 from services.evolution import send_text
+from services.financeiro import process_expense_message
 from services.parser import IncomingMessage, extract_messages, parse_expense
+from services.settings import is_expense_group
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -61,22 +63,51 @@ async def evolution_webhook(request: Request, background: BackgroundTasks):
         logger.warning("Webhook Evolution recebeu corpo que não é JSON")
         return JSONResponse({"ok": True, "ignored": True}, status_code=200)
 
-    if not isinstance(payload, dict):
+    if not isinstance(payload, dict) or not _is_message_upsert(payload):
         return {"ok": True, "ignored": True}
+
+    incoming_messages = [
+        incoming
+        for incoming in extract_messages(payload)
+        if not incoming.from_me and not _is_broadcast(incoming.remote_jid)
+    ]
+    if not incoming_messages:
+        return {"ok": True, "ignored": True}
+
+    expense_messages = [incoming for incoming in incoming_messages if is_expense_group(incoming.remote_jid)]
+    # Fora de GRUPOS_DESPESAS o fluxo anterior segue intacto (texto / auditoria).
+    other_messages = [
+        incoming
+        for incoming in incoming_messages
+        if not is_expense_group(incoming.remote_jid) and incoming.text.strip()
+    ]
+
+    for incoming in expense_messages:
+        background.add_task(process_expense_message, incoming)
 
     results = []
     try:
-        for incoming in extract_messages(payload):
-            if incoming.from_me or _is_broadcast(incoming.remote_jid):
-                continue
+        for incoming in other_messages:
             results.append(_register(incoming, background))
     except Exception:
         logger.exception("Falha ao processar webhook da Evolution")
+        if expense_messages:
+            return {"status": "processing"}
         return {"ok": True}
 
+    if expense_messages:
+        return {"status": "processing"}
     if not results:
         return {"ok": True, "ignored": True}
     return {"ok": True, "results": results}
+
+
+def _is_message_upsert(payload: dict) -> bool:
+    event = payload.get("event")
+    if not isinstance(event, str) or not event.strip():
+        return True
+    normalized = event.strip().replace(".", "_").replace("-", "_").lower()
+    return normalized in {"messages_upsert", "message_upsert"}
 
 
 def _register(incoming: IncomingMessage, background: BackgroundTasks) -> dict:
