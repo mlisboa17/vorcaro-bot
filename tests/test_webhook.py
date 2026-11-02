@@ -159,8 +159,14 @@ class WebhookTests(unittest.TestCase):
         payload["event"] = "MESSAGES_UPSERT"
         payload["data"]["key"]["remoteJid"] = "120363411915877448@g.us"
         with patch.dict(os.environ, {"GRUPOS_DESPESAS": "120363411915877448@g.us, 120363000000000001@g.us"}):
-            with TestClient(app) as client:
-                response = client.post("/webhook/evolution", json=payload)
+            with self.assertLogs("vorcaro", level="INFO") as logs:
+                with TestClient(app) as client:
+                    response = client.post("/webhook/evolution", json=payload)
+        logged = "\n".join(logs.output)
+        self.assertIn("Webhook recebido de: 120363411915877448@g.us", logged)
+        self.assertIn("GRUPOS_DESPESAS atual: 120363411915877448@g.us, 120363000000000001@g.us", logged)
+        self.assertIn("conversation", logged)
+        self.assertNotIn("não está em GRUPOS_DESPESAS", logged)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "processing"})
         process.assert_awaited()
@@ -183,8 +189,14 @@ class WebhookTests(unittest.TestCase):
         payload = _payload("Almoço 85", message_id="LOJA1")
         payload["data"]["key"]["remoteJid"] = "120363000000000009@g.us"
         with patch.dict(os.environ, {"GRUPOS_DESPESAS": "120363411915877448@g.us"}):
-            with TestClient(app) as client:
-                response = client.post("/webhook/evolution", json=payload)
+            with self.assertLogs("vorcaro", level="INFO") as logs:
+                with TestClient(app) as client:
+                    response = client.post("/webhook/evolution", json=payload)
+        logged = "\n".join(logs.output)
+        self.assertIn(
+            "Mensagem ignorada: 120363000000000009@g.us não está em GRUPOS_DESPESAS",
+            logged,
+        )
         self.assertEqual(response.status_code, 200)
         self.assertIn("results", response.json())
         with Session(engine) as session:

@@ -123,6 +123,17 @@ def _parse_text(text: str, *, today: date) -> ParsedExpense | None:
     )
 
 
+def describe_incoming(payload: dict) -> list[tuple[str, list[str]]]:
+    """Devolve o JID e as chaves de data.message de cada evento do webhook."""
+    described: list[tuple[str, list[str]]] = []
+    for node in _message_nodes(payload):
+        key = node.get("key") if isinstance(node.get("key"), dict) else {}
+        remote_jid = key.get("remoteJid") or key.get("remoteJidAlt") or ""
+        message = node.get("message") if isinstance(node.get("message"), dict) else {}
+        described.append((str(remote_jid), sorted(str(name) for name in message)))
+    return described
+
+
 def _message_nodes(payload: dict) -> list[dict]:
     data = payload.get("data", payload)
     if isinstance(data, list):

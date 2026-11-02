@@ -21,6 +21,7 @@ async def send_text(remote_jid: str, text: str, *, delay: int = 1000) -> bool:
     """Envia texto pela Evolution API v2. Falhas ficam no log e não sobem ao webhook."""
     config = evolution_config()
     number = destination_for(remote_jid)
+    logger.info(f"Tentando enviar resposta para {remote_jid} via instância {config.instance}...")
     if not config.ready or not number:
         logger.warning("Evolution API incompleta; mensagem não enviada.")
         return False
@@ -35,13 +36,15 @@ async def send_text(remote_jid: str, text: str, *, delay: int = 1000) -> bool:
         logger.exception("Falha de rede ao enviar mensagem pela Evolution API para %s", number)
         return False
 
+    body = response.text[:2000]
+    logger.info(f"Evolution respondeu status={response.status_code} body={body}")
     if response.status_code not in {200, 201}:
         logger.error(
             "Evolution API recusou o envio (%s) para %s em %s. Corpo: %s",
             response.status_code,
             number,
             url,
-            response.text[:2000],
+            body,
         )
         return False
     return True

@@ -63,15 +63,18 @@ def format_registered_expense(expense: CorporateExpense) -> str:
 
 
 async def process_expense_message(incoming: IncomingMessage) -> None:
-    if not _claim(incoming):
-        logger.info("Mensagem financeira já processada: %s", incoming.external_id)
-        return
     try:
+        if not _claim(incoming):
+            logger.info("Mensagem financeira já processada: %s", incoming.external_id)
+            return
         await _handle(incoming)
-    except Exception:
-        logger.exception("Falha no Gerente Financeiro para %s", incoming.remote_jid)
+    except Exception as e:
+        logger.exception(f"ERRO CRÍTICO NO PROCESSAMENTO DA DESPESA: {e}")
         _release(incoming.external_id)
-        await send_text(incoming.remote_jid, _FAILURE_REPLY)
+        try:
+            await send_text(incoming.remote_jid, _FAILURE_REPLY)
+        except Exception as send_error:
+            logger.exception(f"ERRO CRÍTICO NO PROCESSAMENTO DA DESPESA: {send_error}")
 
 
 async def _handle(incoming: IncomingMessage) -> None:

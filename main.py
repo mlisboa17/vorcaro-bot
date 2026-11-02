@@ -15,7 +15,7 @@ from database import DATABASE_URL, engine, ensure_data_dir, init_db
 from models import CONFIRMATION_BODY, CONFIRMATION_TEMPLATE_KEY, MessageTemplate, Transaction
 from services.evolution import send_text
 from services.financeiro import process_expense_message
-from services.parser import IncomingMessage, extract_messages, parse_expense
+from services.parser import IncomingMessage, describe_incoming, extract_messages, parse_expense
 from services.settings import is_expense_group
 
 logging.basicConfig(
@@ -63,7 +63,11 @@ async def evolution_webhook(request: Request, background: BackgroundTasks):
         logger.warning("Webhook Evolution recebeu corpo que não é JSON")
         return JSONResponse({"ok": True, "ignored": True}, status_code=200)
 
-    if not isinstance(payload, dict) or not _is_message_upsert(payload):
+    if not isinstance(payload, dict):
+        return {"ok": True, "ignored": True}
+
+    _log_webhook(payload)
+    if not _is_message_upsert(payload):
         return {"ok": True, "ignored": True}
 
     incoming_messages = [
@@ -100,6 +104,20 @@ async def evolution_webhook(request: Request, background: BackgroundTasks):
     if not results:
         return {"ok": True, "ignored": True}
     return {"ok": True, "results": results}
+
+
+def _log_webhook(payload: dict) -> None:
+    configured = os.getenv("GRUPOS_DESPESAS", "")
+    logger.info("GRUPOS_DESPESAS atual: %s", configured.strip() or "(vazio)")
+    described = describe_incoming(payload)
+    if not described:
+        logger.info("Webhook sem data.message")
+        return
+    for remote_jid, message_keys in described:
+        logger.info(f"Webhook recebido de: {remote_jid}")
+        logger.info(f"Chaves em data.message: {message_keys}")
+        if not is_expense_group(remote_jid):
+            logger.info(f"Mensagem ignorada: {remote_jid} não está em GRUPOS_DESPESAS")
 
 
 def _is_message_upsert(payload: dict) -> bool:
