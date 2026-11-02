@@ -3,10 +3,6 @@ from typing import Optional
 
 from sqlmodel import Field, SQLModel
 
-
-def utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
-
 CATEGORIES = (
     "Imobiliário",
     "Consórcios",
@@ -34,7 +30,7 @@ class Transaction(SQLModel, table=True):
     source: str = Field(default="whatsapp")
     raw_text: Optional[str] = None
     external_id: Optional[str] = Field(default=None, unique=True, index=True)
-    created_at: datetime = Field(default_factory=utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 CORPORATE_CATEGORIES = (
@@ -77,7 +73,7 @@ class CorporateExpense(SQLModel, table=True):
     raw_text: Optional[str] = None
     group_jid: str = Field(index=True)
     external_id: Optional[str] = Field(default=None, unique=True, index=True)
-    created_at: datetime = Field(default_factory=utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class InboundReceipt(SQLModel, table=True):
@@ -88,7 +84,7 @@ class InboundReceipt(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     external_id: str = Field(unique=True, index=True)
     group_jid: str
-    created_at: datetime = Field(default_factory=utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class MessageTemplate(SQLModel, table=True):
@@ -97,4 +93,4 @@ class MessageTemplate(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     key: str = Field(index=True, unique=True)
     body: str
-    created_at: datetime = Field(default_factory=utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

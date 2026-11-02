@@ -32,7 +32,7 @@ _UNSUPPORTED_REPLY = "Neste grupo eu leio texto, PDF, imagem e áudio de despesa
 
 
 def now_local() -> datetime:
-    return datetime.now(_TZ).replace(tzinfo=None)
+    return datetime.now(_TZ)
 
 
 def is_financial_query(text: str) -> bool:
@@ -51,7 +51,7 @@ def format_registered_expense(expense: CorporateExpense) -> str:
             "🧾 *DESPESA REGISTRADA*",
             "━━━━━━━━━━━━━━━━━━",
             f"💰 *Valor:* R$ {format_brl(expense.amount)}",
-            f"📅 *Data/Hora:* {expense.occurred_at.strftime('%d/%m/%Y %H:%M')}",
+            f"📅 *Data/Hora:* {_as_local(expense.occurred_at).strftime('%d/%m/%Y %H:%M')}",
             f"🏷️ *Categoria:* {expense.category}",
             f"👤 *Favorecido / Fornecedor:* {expense.supplier}",
             f"🏢 *Unidade Identificada:* {expense.unit}",
@@ -205,15 +205,23 @@ def _summary_reply(group_jid: str, text: str, moment: datetime) -> str:
 
 def _query_window(text: str, moment: datetime) -> tuple[datetime, datetime, str]:
     folded = _fold(text)
-    end = datetime.combine(moment.date(), time.max)
+    local = _as_local(moment)
+    end = _at(local.date(), time.max)
     if "hoje" in folded:
-        start = datetime.combine(moment.date(), time.min)
-        return start, end, moment.strftime("%d/%m/%Y")
+        return _at(local.date(), time.min), end, local.strftime("%d/%m/%Y")
     if "semana" in folded:
-        start = datetime.combine(moment.date() - timedelta(days=6), time.min)
-        return start, end, "últimos 7 dias"
-    start = datetime.combine(moment.date().replace(day=1), time.min)
-    return start, end, moment.strftime("%m/%Y")
+        return _at(local.date() - timedelta(days=6), time.min), end, "últimos 7 dias"
+    return _at(local.date().replace(day=1), time.min), end, local.strftime("%m/%Y")
+
+
+def _at(day, clock: time) -> datetime:
+    return datetime.combine(day, clock).replace(tzinfo=_TZ)
+
+
+def _as_local(moment: datetime) -> datetime:
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=_TZ)
+    return moment.astimezone(_TZ)
 
 
 def _claim(incoming: IncomingMessage) -> bool:
@@ -262,14 +270,12 @@ def _amount(value: object) -> float | None:
 
 def _occurred_at(value: object, reference: datetime) -> datetime:
     if not isinstance(value, str) or not value.strip():
-        return reference
+        return _as_local(reference)
     try:
         parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
     except ValueError:
-        return reference
-    if parsed.tzinfo is not None:
-        parsed = parsed.astimezone(_TZ).replace(tzinfo=None)
-    return parsed
+        return _as_local(reference)
+    return _as_local(parsed)
 
 
 def _supplier(value: object) -> str:

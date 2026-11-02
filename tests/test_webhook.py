@@ -278,7 +278,7 @@ class CorporateFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row.group_jid, incoming.remote_jid)
 
     async def test_consulta_usa_o_banco_e_nao_o_gemini(self):
-        moment = datetime.now(ZoneInfo("America/Sao_Paulo")).replace(tzinfo=None)
+        moment = datetime.now(ZoneInfo("America/Sao_Paulo"))
         with Session(engine) as session:
             session.add(
                 CorporateExpense(
