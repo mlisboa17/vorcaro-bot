@@ -70,11 +70,27 @@ def ensure_data_dir() -> None:
             pass
 
 
+def ensure_expense_columns() -> None:
+    """Acrescenta colunas novas em bases SQLite já criadas. create_all não altera tabela existente."""
+    if not str(engine.url).startswith("sqlite"):
+        return
+    with engine.begin() as connection:
+        tables = connection.exec_driver_sql(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'expenses'"
+        ).fetchall()
+        if not tables:
+            return
+        columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(expenses)").fetchall()}
+        if "alert_message_id" not in columns:
+            connection.exec_driver_sql("ALTER TABLE expenses ADD COLUMN alert_message_id VARCHAR")
+
+
 def init_db() -> None:
     from models import CONFIRMATION_BODY, CONFIRMATION_TEMPLATE_KEY, MessageTemplate
 
     ensure_data_dir()
     SQLModel.metadata.create_all(engine)
+    ensure_expense_columns()
     with Session(engine) as session:
         existing = session.exec(
             select(MessageTemplate).where(MessageTemplate.key == CONFIRMATION_TEMPLATE_KEY)

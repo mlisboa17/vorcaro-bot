@@ -52,6 +52,7 @@ class Expense(SQLModel, table=True):
     raw_text_ou_transcricao: Optional[str] = Field(default=None)
     group_jid: str = Field(index=True)
     external_id: Optional[str] = Field(default=None, unique=True, index=True)
+    alert_message_id: Optional[str] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

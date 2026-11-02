@@ -113,6 +113,10 @@ def canonical_subcategory(value: object, principal: str | None = None) -> str | 
     return None
 
 
+def is_closed_pair(principal: str | None, subcategory: str | None) -> bool:
+    return bool(principal and subcategory and principal_of(subcategory) == principal)
+
+
 def principal_of(subcategory: str) -> str | None:
     for principal, subs in CHART.items():
         if subcategory in subs:
@@ -205,6 +209,9 @@ def bank_from_text(text: str) -> str | None:
         ("nubank", "Nubank"),
         ("itau", "Itaú"),
         ("caixa da loja", "Caixa da loja"),
+        ("cartao de credito", "Cartão de crédito"),
+        ("cartao de debito", "Cartão de débito"),
+        ("cartao", "Cartão"),
         ("dinheiro", "Dinheiro"),
     )
     for needle, label in banks:

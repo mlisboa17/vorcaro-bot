@@ -49,6 +49,7 @@ class EvolutionTests(unittest.IsolatedAsyncioTestCase):
                 delivered = await send_text("5511999999999@s.whatsapp.net", "ok")
 
         self.assertTrue(delivered)
+        self.assertIsNone(delivered.message_id)
         self.assertEqual(len(client.calls), 1)
         call = client.calls[0]
         self.assertEqual(call["url"], "http://evolution.local:8080/message/sendText/vorcaro")
@@ -58,6 +59,22 @@ class EvolutionTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(call["headers"]["apikey"], "secret")
         self.assertEqual(call["headers"]["Content-Type"], "application/json")
+
+    async def test_send_text_devolve_id_da_mensagem(self):
+        client = _Client()
+        client.response = _Response(text='{"key": {"id": "ALERT9"}}')
+        with patch.dict(
+            os.environ,
+            {
+                "EVOLUTION_API_URL": "http://evolution.local:8080",
+                "EVOLUTION_API_KEY": "secret",
+                "EVOLUTION_INSTANCE": "vorcaro",
+            },
+        ):
+            with patch("services.evolution.httpx.AsyncClient", return_value=client):
+                delivered = await send_text("120363411915877448@g.us", "dúvida")
+        self.assertTrue(delivered)
+        self.assertEqual(delivered.message_id, "ALERT9")
 
     async def test_status_de_erro_registra_o_corpo(self):
         client = _Client()

@@ -123,6 +123,29 @@ def _parse_text(text: str, *, today: date) -> ParsedExpense | None:
     )
 
 
+def quoted_reference(node: dict | None) -> tuple[str | None, str | None]:
+    """Devolve o id da mensagem citada e o texto citado, quando o WhatsApp manda um reply."""
+    if not isinstance(node, dict):
+        return None, None
+    message = node.get("message") if isinstance(node.get("message"), dict) else {}
+    contexts: list[dict] = []
+    extended = message.get("extendedTextMessage")
+    if isinstance(extended, dict) and isinstance(extended.get("contextInfo"), dict):
+        contexts.append(extended["contextInfo"])
+    if isinstance(message.get("contextInfo"), dict):
+        contexts.append(message["contextInfo"])
+    if isinstance(node.get("contextInfo"), dict):
+        contexts.append(node["contextInfo"])
+    for info in contexts:
+        stanza = info.get("stanzaId") or info.get("stanzaID") or info.get("quotedStanzaId")
+        quoted = _quoted_text(info.get("quotedMessage"))
+        if isinstance(stanza, str) and stanza.strip():
+            return stanza.strip(), quoted
+        if quoted:
+            return None, quoted
+    return None, None
+
+
 def describe_incoming(payload: dict) -> list[tuple[str, list[str]]]:
     """Devolve o JID e as chaves de data.message de cada evento do webhook."""
     described: list[tuple[str, list[str]]] = []
@@ -146,6 +169,23 @@ def _message_nodes(payload: dict) -> list[dict]:
     if "key" in data or "message" in data:
         return [data]
     return []
+
+
+def _quoted_text(quoted: object) -> str | None:
+    if isinstance(quoted, str) and quoted.strip():
+        return quoted.strip()
+    if not isinstance(quoted, dict):
+        return None
+    for key in ("conversation", "text"):
+        value = quoted.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    extended = quoted.get("extendedTextMessage")
+    if isinstance(extended, dict):
+        text = extended.get("text")
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+    return None
 
 
 def _message_text(message: object) -> str | None:
